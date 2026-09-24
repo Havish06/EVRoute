@@ -1,0 +1,6 @@
+{
+  "name": "EVRoute - Intelligent EV Route Planning",
+  "description": "Intelligent Electric Vehicle route-planning system combining ML-based energy prediction, elevation profiles, weather, traffic, and battery-constrained A* graph search.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
