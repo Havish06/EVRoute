@@ -86,7 +86,27 @@ const vitChennaiNodes: GraphNode[] = [
     }
   },
   // Alternative northern branch: Ranipet / Vellore / Krishnagiri
-  { id: 'kanchipuram', name: 'Kanchipuram Bypass', lat: 12.8342, lng: 79.7036, elevationM: 83 },
+  { 
+    id: 'kanchipuram', 
+    name: 'Kanchipuram Bypass (NH 48)', 
+    lat: 12.8342, 
+    lng: 79.7036, 
+    elevationM: 83,
+    chargingStation: {
+      id: 'cs_kanchipuram_zeon',
+      name: 'Zeon 60kW DC Fast Charger',
+      operator: 'Zeon Electric',
+      lat: 12.8342,
+      lng: 79.7036,
+      powerKw: 60,
+      connectorTypes: ['CCS2', 'Type-2'],
+      totalPorts: 2,
+      availablePorts: 2,
+      pricePerKwh: 21.0,
+      amenities: ['Highway Plaza', 'Café', 'Restrooms'],
+      isFastCharger: true,
+    }
+  },
   { 
     id: 'vellore', 
     name: 'Vellore Golden Temple Road', 
@@ -401,7 +421,27 @@ const blrCoorgNodes: GraphNode[] = [
     }
   },
   { id: 'hunsur', name: 'Hunsur Town', lat: 12.3082, lng: 76.2917, elevationM: 792 },
-  { id: 'kushalnagar', name: 'Kushalnagar (Coorg Gateway)', lat: 12.4542, lng: 75.9610, elevationM: 840 },
+  { 
+    id: 'kushalnagar', 
+    name: 'Kushalnagar (Coorg Gateway)', 
+    lat: 12.4542, 
+    lng: 75.9610, 
+    elevationM: 840,
+    chargingStation: {
+      id: 'cs_kushalnagar_tata',
+      name: 'Tata Power 60kW DC Hub',
+      operator: 'Tata Power',
+      lat: 12.4542,
+      lng: 75.9610,
+      powerKw: 60,
+      connectorTypes: ['CCS2'],
+      totalPorts: 2,
+      availablePorts: 2,
+      pricePerKwh: 20.5,
+      amenities: ['Coorg Coffee Works', 'Restrooms', 'Food Court'],
+      isFastCharger: true,
+    }
+  },
   { id: 'madikeri_coorg', name: 'Madikeri (Coorg Hills)', lat: 12.4244, lng: 75.7382, elevationM: 1150, isDestination: true },
   // Alternate route via Kunigal / Channarayapatna / Hassan / Somwarpet
   { id: 'kunigal', name: 'Kunigal NH75', lat: 13.0238, lng: 77.0270, elevationM: 773 },
@@ -591,7 +631,7 @@ const blrCoorgEdges: GraphEdge[] = [
 export const ROUTE_PRESETS: RoutePreset[] = [
   {
     id: 'vit_chennai_yercaud',
-    name: 'VIT Chennai ➔ Yercaud Hilltop',
+    name: 'VIT Chennai → Yercaud Hilltop',
     sourceName: 'VIT Chennai (Kelambakkam)',
     destinationName: 'Yercaud (Shevaroy Hills, 1,515m)',
     description: 'Document Benchmark Scenario: 310 km mountain ascent from coastal plains (32m) to Yercaud Ghat (1,515m). Evaluates hill climbing, high-speed motorway drag, and charging stop necessity.',
@@ -612,7 +652,7 @@ export const ROUTE_PRESETS: RoutePreset[] = [
   },
   {
     id: 'blr_coorg',
-    name: 'Bengaluru ➔ Coorg (Madikeri)',
+    name: 'Bengaluru → Coorg (Madikeri)',
     sourceName: 'Bengaluru (Indiranagar)',
     destinationName: 'Madikeri (Coorg, 1,150m)',
     description: 'Interstate hill station corridor: 267 km featuring the high-speed Mysuru Expressway vs the steady gradient Kunigal-Channarayapatna route.',

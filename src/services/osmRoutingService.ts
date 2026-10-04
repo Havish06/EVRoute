@@ -15,11 +15,39 @@ const liveOsmCache = new Map<string, { coordinates: [number, number][]; distance
 /**
  * Returns genuine OpenStreetMap road waypoints for a graph edge.
  * Uses pre-computed high-resolution OSRM road geometry if available, or falls back to edge waypoints.
+ * Automatically handles key aliases and ensures waypoints match the direction of traversal.
  */
-export function getOsmRoadWaypoints(edgeId: string, fallback: [number, number][]): [number, number][] {
-  const cached = OSM_GEOMETRIES[edgeId];
-  if (cached && cached.waypoints && cached.waypoints.length > 0) {
-    return cached.waypoints;
+export function getOsmRoadWaypoints(edgeId: string, fallback: [number, number][] = []): [number, number][] {
+  // Direct lookup
+  let osmData = OSM_GEOMETRIES[edgeId];
+
+  // Alias lookup if not found directly
+  if (!osmData) {
+    const aliasKey = edgeId
+      .replace('hairpin10', 'hairpin')
+      .replace('hairpin', 'hairpin10')
+      .replace('mysore', 'mysuru')
+      .replace('mysuru', 'mysore');
+    osmData = OSM_GEOMETRIES[aliasKey];
+  }
+
+  if (osmData && osmData.waypoints && osmData.waypoints.length > 0) {
+    const waypoints = osmData.waypoints;
+    // Check orientation if fallback coordinates exist
+    if (fallback && fallback.length >= 2) {
+      const startPt = fallback[0];
+      const wpStart = waypoints[0];
+      const wpEnd = waypoints[waypoints.length - 1];
+
+      const distToStart = Math.hypot(startPt[0] - wpStart[0], startPt[1] - wpStart[1]);
+      const distToEnd = Math.hypot(startPt[0] - wpEnd[0], startPt[1] - wpEnd[1]);
+
+      // If the edge starts closer to wpEnd, reverse waypoints to match traversal direction
+      if (distToEnd < distToStart) {
+        return [...waypoints].reverse();
+      }
+    }
+    return waypoints;
   }
   return fallback;
 }

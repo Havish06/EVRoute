@@ -1,24 +1,27 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Navbar } from './components/Navbar';
-import { TripInputPanel } from './components/TripInputPanel';
-import { RouteMap } from './components/RouteMap';
-import { RouteComparison } from './components/RouteComparison';
-import { ElevationProfile } from './components/ElevationProfile';
-import { LiveTelemetryPanel } from './components/LiveTelemetryPanel';
+import { Navbar, AppMode } from './components/Navbar';
+import { PlanMode } from './components/modes/PlanMode';
+import { DriveMode } from './components/modes/DriveMode';
+import { AnalyzeMode } from './components/modes/AnalyzeMode';
+import { EngineMode } from './components/modes/EngineMode';
 import { MLInsightsModal } from './components/MLInsightsModal';
+import { RangeIsochroneModal } from './components/RangeIsochroneModal';
+import { ModelLearningModal } from './components/ModelLearningModal';
+import { VehicleSpecSettingsModal } from './components/VehicleSpecSettingsModal';
 import { ROUTE_PRESETS, RoutePreset } from './data/sampleRoutes';
 import { VEHICLE_DATABASE, getVehicleById } from './data/vehicles';
-import { VehicleSpec, TripInputs, RouteOption, TelemetryState, WeatherCondition } from './types';
+import { VehicleSpec, TripInputs, RouteOption, TelemetryState, WeatherCondition, IsochroneContour, TelemetryAnomaly, DriverStyle } from './types';
 import { computeAllRouteOptions, solveAStarRoute } from './services/astarRouter';
 import { fetchRealtimeRouteWeather } from './services/weatherService';
+import { recordTelemetryObservation } from './services/telemetryLearningLoop';
 
 export default function App() {
+  const [activeMode, setActiveMode] = useState<AppMode>('plan');
   const [activePreset, setActivePreset] = useState<RoutePreset>(ROUTE_PRESETS[0]);
   const [currentWeather, setCurrentWeather] = useState<WeatherCondition>(ROUTE_PRESETS[0].weather);
   const [isRefreshingWeather, setIsRefreshingWeather] = useState<boolean>(false);
-  const [lastWeatherUpdateText, setLastWeatherUpdateText] = useState<string>('');
 
-  const [selectedVehicle, setSelectedVehicle] = useState<VehicleSpec>(
+  const [selectedVehicle, setSelectedVehicle] = useState<VehicleSpec>(() =>
     getVehicleById(ROUTE_PRESETS[0].defaultVehicleId)
   );
 
@@ -27,41 +30,67 @@ export default function App() {
     sourceId: ROUTE_PRESETS[0].sourceNodeId,
     destinationId: ROUTE_PRESETS[0].destinationNodeId,
     batterySoc: ROUTE_PRESETS[0].defaultSoc,
-    passengers: 3,
+    passengers: 2,
     passengerWeightKg: 75,
     cargoWeightKg: 20,
     minimumReserveSoc: 10,
     cabinTempC: 22,
     routingObjective: 'energy_efficient',
+    driverStyle: 'balanced',
   });
 
   const [isMLModalOpen, setIsMLModalOpen] = useState(false);
+  const [isIsochroneModalOpen, setIsIsochroneModalOpen] = useState(false);
+  const [isModelLearningModalOpen, setIsModelLearningModalOpen] = useState(false);
+  const [isVehicleSettingsOpen, setIsVehicleSettingsOpen] = useState(false);
+  const [showIsochronesOnMap, setShowIsochronesOnMap] = useState(false);
+  const [isochroneContours, setIsochroneContours] = useState<IsochroneContour[]>([]);
   const [isDriving, setIsDriving] = useState(false);
+  const [isCalculating, setIsCalculating] = useState(false);
 
   // Computed routes
-  const [routes, setRoutes] = useState<RouteOption[]>([]);
-  const [activeRouteId, setActiveRouteId] = useState<string>('route_energy_efficient');
-
-  // Calculate routes on input change, scenario switch, or weather update
-  const calculateRoutes = useCallback(() => {
-    const computed = computeAllRouteOptions(
+  const [routes, setRoutes] = useState<RouteOption[]>(() => {
+    return computeAllRouteOptions(
       activePreset.nodes,
       activePreset.edges,
       selectedVehicle,
       inputs,
       currentWeather
     );
-    setRoutes(computed);
-    if (computed.length > 0) {
-      const match = computed.find(r => r.type === inputs.routingObjective) || computed[0];
-      setActiveRouteId(match.id);
-    }
+  });
+  const [activeRouteId, setActiveRouteId] = useState<string>('route_energy_efficient');
+
+  const handleSelectVehicle = useCallback((vehicle: VehicleSpec) => {
+    setSelectedVehicle(vehicle);
+    setInputs(prev => ({ ...prev, vehicleId: vehicle.id }));
+  }, []);
+
+  // Fast route calculation
+  const calculateRoutes = useCallback(() => {
+    setIsCalculating(true);
+    requestAnimationFrame(() => {
+      const computed = computeAllRouteOptions(
+        activePreset.nodes,
+        activePreset.edges,
+        selectedVehicle,
+        inputs,
+        currentWeather
+      );
+      setRoutes(computed);
+      if (computed.length > 0) {
+        setActiveRouteId(prevId => {
+          const match = computed.find(r => r.id === prevId) || computed.find(r => r.type === inputs.routingObjective) || computed[0];
+          return match.id;
+        });
+      }
+      setIsCalculating(false);
+    });
   }, [activePreset, selectedVehicle, inputs, currentWeather]);
 
-  // Initial calculation
+  // Recalculate routes when vehicle, preset, or inputs change
   useEffect(() => {
     calculateRoutes();
-  }, [calculateRoutes]);
+  }, [selectedVehicle.id, activePreset.id, inputs.batterySoc, inputs.passengers, inputs.cargoWeightKg, inputs.minimumReserveSoc, inputs.driverStyle]);
 
   const activeRoute = useMemo(() => {
     return routes.find(r => r.id === activeRouteId) || routes[0] || null;
@@ -82,9 +111,14 @@ export default function App() {
     progressPercent: 0,
     activeSegmentIndex: 0,
     rerouteSuggested: false,
+    packTempC: 31,
+    preconditioningActive: false,
+    anomalyAlert: { detected: false, type: 'none', message: '', severity: 'low' },
+    driverStyle: inputs.driverStyle || 'balanced',
+    p10ArrivalSoc: 0,
+    p90ArrivalSoc: 0,
   });
 
-  // Additional dynamic disturbance factor
   const disturbanceRef = useRef<number>(1.0);
 
   // Sync telemetry when active route changes or reset
@@ -106,14 +140,19 @@ export default function App() {
       progressPercent: 0,
       activeSegmentIndex: 0,
       rerouteSuggested: false,
+      packTempC: 31,
+      preconditioningActive: false,
+      anomalyAlert: { detected: false, type: 'none', message: '', severity: 'low' },
+      driverStyle: inputs.driverStyle || 'balanced',
+      p10ArrivalSoc: activeRoute?.quantile?.p10Soc || 0,
+      p90ArrivalSoc: activeRoute?.quantile?.p90Soc || 0,
     });
-  }, [activePreset, inputs.batterySoc]);
+  }, [activePreset, inputs.batterySoc, inputs.driverStyle, activeRoute]);
 
   // Handle preset change
   const handleSelectPreset = (preset: RoutePreset) => {
     setActivePreset(preset);
     setCurrentWeather(preset.weather);
-    setLastWeatherUpdateText('');
     const vehicle = getVehicleById(preset.defaultVehicleId);
     setSelectedVehicle(vehicle);
     setInputs(prev => ({
@@ -126,18 +165,17 @@ export default function App() {
     resetTelemetry();
   };
 
-  // Real-Time Segment Weather Refresh Simulation
+  // Weather Refresh
   const handleRefreshWeather = useCallback(() => {
     setIsRefreshingWeather(true);
     setTimeout(() => {
-      const { updatedWeather, deltaDescription } = fetchRealtimeRouteWeather(
+      const { updatedWeather } = fetchRealtimeRouteWeather(
         currentWeather,
         activePreset.name
       );
       setCurrentWeather(updatedWeather);
-      setLastWeatherUpdateText(deltaDescription);
       setIsRefreshingWeather(false);
-    }, 450);
+    }, 350);
   }, [currentWeather, activePreset.name]);
 
   // Driving Simulation Animation Loop
@@ -150,11 +188,9 @@ export default function App() {
         const totalPoints = polyline.length;
         if (totalPoints < 2) return prev;
 
-        // Advance progress
         const step = (0.35 * prev.simSpeedMultiplier) / (activeRoute.totalDistanceKm || 100);
         const newProgress = Math.min(100, prev.progressPercent + step);
 
-        // Find coordinate along polyline
         const pointFloat = (newProgress / 100) * (totalPoints - 1);
         const pointIdx = Math.min(totalPoints - 2, Math.floor(pointFloat));
         const t = pointFloat - pointIdx;
@@ -166,7 +202,6 @@ export default function App() {
         const currentLng = p1[1] + (p2[1] - p1[1]) * t;
         const currentDistanceKm = Number(((newProgress / 100) * activeRoute.totalDistanceKm).toFixed(1));
 
-        // Estimate current elevation along route
         const segmentIdx = Math.min(
           activeRoute.segments.length - 1,
           Math.floor((newProgress / 100) * activeRoute.segments.length)
@@ -174,27 +209,52 @@ export default function App() {
         const activeSeg = activeRoute.segments[segmentIdx];
         const currentSpeedKmh = activeSeg ? activeSeg.speedKmh : 70;
 
-        // Linear interpolation of altitude
         const startElev = activePreset.nodes.find(n => n.id === activeRoute.pathNodeIds[0])?.elevationM || 32;
         const destElev = activePreset.nodes.find(n => n.id === activeRoute.pathNodeIds[activeRoute.pathNodeIds.length - 1])?.elevationM || 1515;
-        // Mountain ascent accelerates in the last 20%
         let elevT = newProgress / 100;
         if (elevT > 0.75) elevT = 0.3 + Math.pow((elevT - 0.75) / 0.25, 1.8) * 0.7;
         const currentElevationM = Math.round(startElev + (destElev - startElev) * elevT);
 
-        // Battery calculation
         const expectedSocDropTotal = inputs.batterySoc - activeRoute.arrivalSoc;
         const predictedSocAtPoint = inputs.batterySoc - (expectedSocDropTotal * (newProgress / 100));
 
-        // Actual battery accounts for disturbance multiplier
         const actualSocDrop = (expectedSocDropTotal * (newProgress / 100)) * disturbanceRef.current;
         const currentActualSoc = Math.max(0, inputs.batterySoc - actualSocDrop);
         const socErrorPercent = Number((predictedSocAtPoint - currentActualSoc).toFixed(1));
 
-        const rerouteSuggested = socErrorPercent >= 3.5 && currentActualSoc < (inputs.minimumReserveSoc + 4);
+        const rerouteSuggested = socErrorPercent >= 3.2 && currentActualSoc < (inputs.minimumReserveSoc + 6);
+
+        const hasChargingStop = Boolean(activeRoute.chargingStops && activeRoute.chargingStops.length > 0);
+        const remainingDistKm = activeRoute.totalDistanceKm - currentDistanceKm;
+        const preconditioningActive = hasChargingStop && remainingDistKm < 35 && remainingDistKm > 5;
+
+        const baseTemp = 30 + (currentSpeedKmh > 85 ? 3 : 1);
+        const packTempC = preconditioningActive ? 32 : Math.round(baseTemp + (currentDistanceKm * 0.012));
+
+        const anomalyDetected = disturbanceRef.current > 1.15 || socErrorPercent >= 3.8;
+        const anomalyAlert: TelemetryAnomaly = anomalyDetected ? {
+          detected: true,
+          type: 'excess_drain',
+          message: `Excess Energy Drain Detected (+${((disturbanceRef.current - 1) * 100).toFixed(0)}% above baseline). Reduce highway speed or plan reroute.`,
+          severity: disturbanceRef.current > 1.25 ? 'high' : 'medium',
+        } : { detected: false, type: 'none', message: '', severity: 'low' };
+
+        const p10ArrivalSoc = activeRoute.quantile?.p10Soc || Math.round(currentActualSoc - (expectedSocDropTotal * (1 - newProgress / 100) * 0.92));
+        const p90ArrivalSoc = activeRoute.quantile?.p90Soc || Math.round(currentActualSoc - (expectedSocDropTotal * (1 - newProgress / 100) * 1.12));
 
         if (newProgress >= 100) {
           setIsDriving(false);
+          recordTelemetryObservation({
+            vehicleId: selectedVehicle.id,
+            distanceKm: activeRoute.totalDistanceKm,
+            avgSpeedKmh: Math.round(activeRoute.totalDistanceKm / (activeRoute.totalTravelTimeMin / 60)),
+            gradientAvg: 0.15,
+            ambientTempC: currentWeather.temperatureC,
+            predictedWhPerKm: activeRoute.averageWhPerKm,
+            actualWhPerKm: Math.round(activeRoute.averageWhPerKm * disturbanceRef.current),
+            errorRatio: Number((disturbanceRef.current).toFixed(3)),
+            driverStyle: inputs.driverStyle || 'balanced',
+          });
         }
 
         return {
@@ -210,27 +270,31 @@ export default function App() {
           progressPercent: newProgress,
           activeSegmentIndex: segmentIdx,
           rerouteSuggested,
+          packTempC,
+          preconditioningActive,
+          anomalyAlert,
+          p10ArrivalSoc,
+          p90ArrivalSoc,
         };
       });
     }, 100);
 
     return () => clearInterval(interval);
-  }, [isDriving, activeRoute, activePreset, inputs.batterySoc, inputs.minimumReserveSoc]);
+  }, [isDriving, activeRoute, activePreset, inputs.batterySoc, inputs.minimumReserveSoc, inputs.driverStyle, selectedVehicle, currentWeather]);
 
   // Disturbance Injection Handler
   const handleInjectDisturbance = (type: 'headwind' | 'ac_blast' | 'traffic_shock') => {
     if (type === 'headwind') {
-      disturbanceRef.current += 0.22; // 22% more aerodynamic drag
+      disturbanceRef.current += 0.22;
     } else if (type === 'ac_blast') {
-      disturbanceRef.current += 0.15; // 15% more auxiliary power
+      disturbanceRef.current += 0.15;
     } else if (type === 'traffic_shock') {
-      disturbanceRef.current += 0.28; // 28% stop-and-go acceleration losses
+      disturbanceRef.current += 0.28;
     }
   };
 
-  // Dynamic Rerouting Execution (Section 23)
+  // Dynamic Rerouting Execution
   const handleTriggerDynamicReroute = () => {
-    // Dynamically recalculate route with safer reserve and conservative weights
     const recalculated = solveAStarRoute(
       'energy_efficient',
       activePreset.nodes,
@@ -239,21 +303,21 @@ export default function App() {
       {
         ...inputs,
         batterySoc: Math.round(telemetry.currentActualSoc),
-        minimumReserveSoc: 15, // increase safety reserve
+        minimumReserveSoc: Math.max(15, inputs.minimumReserveSoc + 4),
       },
       {
         ...activePreset.weather,
-        windSpeedKmh: activePreset.weather.windSpeedKmh + 20, // adjust for detected headwinds
+        windSpeedKmh: activePreset.weather.windSpeedKmh + 20,
       }
     );
 
     if (recalculated) {
       recalculated.name = 'EVRoute Dynamic Reroute (Safety Recovery)';
-      recalculated.color = '#06b6d4'; // bright cyan
+      recalculated.color = '#06b6d4';
       recalculated.explanation = {
-        title: 'Dynamic Reroute Executed (Section 23)',
+        title: 'Dynamic Reroute Executed',
         points: [
-          'Detected real-time energy consumption rate exceeding initial prediction by +14%',
+          'Detected real-time energy consumption rate exceeding initial prediction by +15%',
           'Recalculated A* graph search prioritizing gentle gradient corridors and nearby charging access',
           `Maintains revised emergency reserve at ${Math.round(recalculated.arrivalSoc)}% arrival SOC`,
         ],
@@ -270,126 +334,121 @@ export default function App() {
     }
   };
 
+  const originCoords: [number, number] = [
+    activePreset.nodes[0]?.lat || 12.8406,
+    activePreset.nodes[0]?.lng || 80.1534,
+  ];
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-slate-900">
-      {/* Top Navigation */}
+    <div className="min-h-screen bg-[#090b10] text-slate-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-slate-900">
+      {/* Top Navbar with Mode Switching & Global Status */}
       <Navbar
+        activeMode={activeMode}
+        onSelectMode={(mode) => setActiveMode(mode)}
         activePreset={activePreset}
         onSelectPreset={handleSelectPreset}
         selectedVehicle={selectedVehicle}
+        onSelectVehicle={handleSelectVehicle}
+        currentSoc={telemetry.currentActualSoc}
+        batteryHealthPercent={inputs.batteryHealthPercent || 100}
         weather={currentWeather}
-        onOpenMLModal={() => setIsMLModalOpen(true)}
         isDriving={isDriving}
         onRefreshWeather={handleRefreshWeather}
         isRefreshingWeather={isRefreshingWeather}
+        onOpenMLModal={() => setIsMLModalOpen(true)}
+        onOpenIsochrones={() => setIsIsochroneModalOpen(true)}
+        onOpenModelLearningModal={() => setIsModelLearningModalOpen(true)}
+        onOpenVehicleSettings={() => setIsVehicleSettingsOpen(true)}
       />
 
-      {/* Main Workspace Layout */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
-        {/* Top Scenario Banner */}
-        <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-slate-100 text-sm">{activePreset.name}</span>
-              <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded text-[11px] font-mono">
-                Active Benchmark
-              </span>
-            </div>
-            <p className="text-slate-400 mt-1">{activePreset.description}</p>
+      {/* Main Mode Workspace */}
+      <main className="flex-1 max-w-[1720px] w-full mx-auto p-2.5 sm:p-4">
+        {/* Core Product Pipeline Header */}
+        <div className="mb-3 hidden sm:flex items-center justify-between text-[11px] font-mono text-slate-400 bg-[#0f121a]/90 border border-white/[0.06] rounded-xl px-3.5 py-1.5 shadow-sm">
+          <div className="flex items-center gap-2">
+            <span className="text-slate-300 font-bold tracking-wider font-sans">EV COCKPIT PIPELINE:</span>
+            <span>Vehicle Dynamics</span>
+            <span className="text-emerald-400">→</span>
+            <span>Terrain & Weather</span>
+            <span className="text-emerald-400">→</span>
+            <span>ML Energy Prediction</span>
+            <span className="text-emerald-400">→</span>
+            <span>A* Battery Search</span>
+            <span className="text-emerald-400">→</span>
+            <span className="text-emerald-400 font-semibold">Optimal EV Trajectory</span>
           </div>
-
-          <div className="flex items-center gap-4 text-[11px] font-mono text-slate-300">
-            <div>
-              <span className="text-slate-500 block">Origin Elev:</span>
-              <span className="text-slate-200 font-bold">{activePreset.nodes[0]?.elevationM}m MSL</span>
-            </div>
-            <div>
-              <span className="text-slate-500 block">Summit Elev:</span>
-              <span className="text-emerald-400 font-bold">
-                {activePreset.nodes[activePreset.nodes.length - 1]?.elevationM}m MSL
-              </span>
-            </div>
-            <div>
-              <span className="text-slate-500 block">Corridor Temp:</span>
-              <span className="text-amber-400 font-bold">{currentWeather.temperatureC}°C</span>
-            </div>
-            <div>
-              <span className="text-slate-500 block">Wind Velocity:</span>
-              <span className="text-cyan-400 font-bold">{currentWeather.windSpeedKmh} km/h</span>
-            </div>
-          </div>
+          <span className="text-[10px] text-slate-500 hidden lg:inline font-mono">
+            Corridor: {activePreset.name}
+          </span>
         </div>
 
-        {/* Primary Content Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* Left Column: Trip Inputs (4 cols on lg) */}
-          <div className="lg:col-span-4 space-y-6">
-            <TripInputPanel
-              inputs={inputs}
-              onChangeInputs={setInputs}
-              selectedVehicle={selectedVehicle}
-              onSelectVehicle={setSelectedVehicle}
-              onCalculateRoute={calculateRoutes}
-              isDriving={isDriving}
-              weather={currentWeather}
-              onRefreshWeather={handleRefreshWeather}
-              isRefreshingWeather={isRefreshingWeather}
-              lastWeatherUpdateText={lastWeatherUpdateText}
-            />
-          </div>
+        {/* 1. PLAN MODE */}
+        {activeMode === 'plan' && activeRoute && (
+          <PlanMode
+            inputs={inputs}
+            onChangeInputs={setInputs}
+            selectedVehicle={selectedVehicle}
+            onSelectVehicle={handleSelectVehicle}
+            onCalculateRoute={calculateRoutes}
+            isDriving={isDriving}
+            weather={currentWeather}
+            nodes={activePreset.nodes}
+            routes={routes}
+            activeRoute={activeRoute}
+            onSelectRoute={(r) => setActiveRouteId(r.id)}
+            telemetry={telemetry}
+            isCalculating={isCalculating}
+            onOpenVehicleSettings={() => setIsVehicleSettingsOpen(true)}
+            onStartDrive={() => setActiveMode('drive')}
+          />
+        )}
 
-          {/* Right Column: Map, Telemetry, Comparison, Elevation (8 cols on lg) */}
-          <div className="lg:col-span-8 space-y-6">
-            {/* Interactive Route Map */}
-            {activeRoute && (
-              <RouteMap
-                routes={routes}
-                activeRoute={activeRoute}
-                onSelectRoute={(r) => setActiveRouteId(r.id)}
-                nodes={activePreset.nodes}
-                telemetry={telemetry}
-                isDriving={isDriving}
-              />
-            )}
+        {/* 2. DRIVE MODE */}
+        {activeMode === 'drive' && activeRoute && (
+          <DriveMode
+            telemetry={telemetry}
+            activeRoute={activeRoute}
+            routes={routes}
+            onSelectRoute={(r) => setActiveRouteId(r.id)}
+            nodes={activePreset.nodes}
+            selectedVehicle={selectedVehicle}
+            isDriving={isDriving}
+            onToggleDriving={() => setIsDriving(prev => !prev)}
+            onResetDriving={resetTelemetry}
+            onChangeSpeedMultiplier={(m) => setTelemetry(prev => ({ ...prev, simSpeedMultiplier: m }))}
+            onInjectDisturbance={handleInjectDisturbance}
+            onTriggerDynamicReroute={handleTriggerDynamicReroute}
+          />
+        )}
 
-            {/* Live Telemetry & Dynamic Rerouting Engine */}
-            {activeRoute && (
-              <LiveTelemetryPanel
-                telemetry={telemetry}
-                activeRoute={activeRoute}
-                selectedVehicle={selectedVehicle}
-                isDriving={isDriving}
-                onToggleDriving={() => setIsDriving(prev => !prev)}
-                onResetDriving={resetTelemetry}
-                onChangeSpeedMultiplier={(m) => setTelemetry(prev => ({ ...prev, simSpeedMultiplier: m }))}
-                onInjectDisturbance={handleInjectDisturbance}
-                onTriggerDynamicReroute={handleTriggerDynamicReroute}
-              />
-            )}
+        {/* 3. ANALYZE MODE */}
+        {activeMode === 'analyze' && activeRoute && (
+          <AnalyzeMode
+            activeRoute={activeRoute}
+            nodes={activePreset.nodes}
+            selectedVehicle={selectedVehicle}
+            weather={currentWeather}
+            startSoc={inputs.batterySoc}
+            minimumReserveSoc={inputs.minimumReserveSoc}
+          />
+        )}
 
-            {/* A* Route Comparison & Explainability */}
-            {activeRoute && (
-              <RouteComparison
-                routes={routes}
-                activeRoute={activeRoute}
-                onSelectRoute={(r) => setActiveRouteId(r.id)}
-                selectedVehicle={selectedVehicle}
-                minimumReserveSoc={inputs.minimumReserveSoc}
-              />
-            )}
-
-            {/* Terrain & Elevation Profile */}
-            {activeRoute && (
-              <ElevationProfile
-                route={activeRoute}
-                nodes={activePreset.nodes}
-              />
-            )}
-          </div>
-        </div>
+        {/* 4. ENGINE MODE */}
+        {activeMode === 'engine' && activeRoute && (
+          <EngineMode
+            nodes={activePreset.nodes}
+            edges={activePreset.edges}
+            selectedVehicle={selectedVehicle}
+            inputs={inputs}
+            onChangeInputs={setInputs}
+            activeRoute={activeRoute}
+            weather={currentWeather}
+            onSelectRoute={(r) => setActiveRouteId(r.id)}
+          />
+        )}
       </main>
 
-      {/* ML Insights & Research Modal */}
+      {/* Technical Modals */}
       {activeRoute && (
         <MLInsightsModal
           isOpen={isMLModalOpen}
@@ -401,10 +460,36 @@ export default function App() {
         />
       )}
 
-      {/* Footer */}
-      <footer className="border-t border-slate-900 bg-slate-950 py-4 text-center text-xs text-slate-600 font-mono">
-        <span>EVRoute · Intelligent Electric Vehicle Route Planning using ML-Based Energy Prediction and A* Graph Search</span>
-      </footer>
+      <RangeIsochroneModal
+        isOpen={isIsochroneModalOpen}
+        onClose={() => setIsIsochroneModalOpen(false)}
+        vehicle={selectedVehicle}
+        currentSoc={inputs.batterySoc}
+        reserveSoc={inputs.minimumReserveSoc}
+        weather={currentWeather}
+        originCoords={originCoords}
+        originName={activePreset.nodes[0]?.name || 'Origin'}
+        showIsochronesOnMap={showIsochronesOnMap}
+        onToggleIsochronesOnMap={(show, contours) => {
+          setShowIsochronesOnMap(show);
+          setIsochroneContours(contours);
+        }}
+      />
+
+      <ModelLearningModal
+        isOpen={isModelLearningModalOpen}
+        onClose={() => setIsModelLearningModalOpen(false)}
+        currentDriverStyle={inputs.driverStyle || 'balanced'}
+        onSelectDriverStyle={(style: DriverStyle) => setInputs(prev => ({ ...prev, driverStyle: style }))}
+      />
+
+      <VehicleSpecSettingsModal
+        isOpen={isVehicleSettingsOpen}
+        onClose={() => setIsVehicleSettingsOpen(false)}
+        selectedVehicle={selectedVehicle}
+        inputs={inputs}
+        onChangeInputs={setInputs}
+      />
     </div>
   );
 }

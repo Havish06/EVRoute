@@ -98,6 +98,33 @@ export interface SegmentEnergyPrediction {
   socDropPercent: number;
 }
 
+export type DriverStyle = 'eco_hypermiler' | 'balanced' | 'spirited' | 'adaptive';
+
+export interface QuantilePrediction {
+  p10Soc: number; // Optimistic (tail-wind, smooth coasting)
+  p50Soc: number; // Nominal ML prediction
+  p90Soc: number; // Conservative (head-wind, heavy HVAC, cold/hot cell)
+  p10EnergyKwh: number;
+  p50EnergyKwh: number;
+  p90EnergyKwh: number;
+  uncertaintyMarginKwh: number;
+  confidenceBandPercent: number; // e.g. 90%
+}
+
+export interface ChargingStop {
+  station: ChargingStation;
+  arrivalSoc: number;
+  targetSoc: number;
+  energyAddedKwh: number;
+  chargingTimeMin: number;
+  stopCostInr: number;
+  queueTimeMin?: number;
+  reliabilityScorePercent?: number;
+  preconditioningDurationMin?: number;
+  optimalExitSocReason?: string;
+  isPreconditioned?: boolean;
+}
+
 export interface RouteOption {
   id: string;
   name: string;
@@ -113,14 +140,7 @@ export interface RouteOption {
   arrivalSoc: number;
   minSocReached: number;
   isFeasible: boolean;
-  chargingStops: {
-    station: ChargingStation;
-    arrivalSoc: number;
-    targetSoc: number;
-    energyAddedKwh: number;
-    chargingTimeMin: number;
-    stopCostInr: number;
-  }[];
+  chargingStops: ChargingStop[];
   explanation: {
     title: string;
     points: string[];
@@ -129,6 +149,12 @@ export interface RouteOption {
     gradientAvoided?: string;
   };
   polyline: [number, number][];
+  quantile?: QuantilePrediction;
+  driveCycleLossKwh?: number;
+  totalRechargeTimeMin?: number;
+  totalTripTimeWithChargingMin?: number;
+  effectiveCapacityKwh?: number;
+  batteryHealthPercent?: number;
 }
 
 export interface TripInputs {
@@ -136,12 +162,21 @@ export interface TripInputs {
   sourceId: string;
   destinationId: string;
   batterySoc: number; // 0 - 100
+  batteryHealthPercent?: number; // 50 - 100% State of Health (SoH), default 100%
   passengers: number;
   passengerWeightKg: number;
   cargoWeightKg: number;
   minimumReserveSoc: number; // default 10%
   cabinTempC: number;
   routingObjective: 'energy_efficient' | 'fastest' | 'balanced';
+  driverStyle?: DriverStyle;
+}
+
+export interface TelemetryAnomaly {
+  detected: boolean;
+  type: 'excess_drain' | 'high_drag' | 'thermal_surge' | 'none';
+  message: string;
+  severity: 'low' | 'medium' | 'high';
 }
 
 export interface TelemetryState {
@@ -158,4 +193,32 @@ export interface TelemetryState {
   progressPercent: number;
   activeSegmentIndex: number;
   rerouteSuggested: boolean;
+  packTempC: number;
+  preconditioningActive: boolean;
+  anomalyAlert?: TelemetryAnomaly;
+  driverStyle: DriverStyle;
+  p10ArrivalSoc: number;
+  p90ArrivalSoc: number;
+}
+
+export interface IsochroneContour {
+  socReserve: number; // e.g. 0% for absolute max, 10% for reserve, 20% for safe
+  radiusKm: number;
+  polygon: [number, number][];
+  label: string;
+  color: string;
+}
+
+export interface TelemetryObservation {
+  id: string;
+  timestamp: number;
+  vehicleId: string;
+  distanceKm: number;
+  avgSpeedKmh: number;
+  gradientAvg: number;
+  ambientTempC: number;
+  predictedWhPerKm: number;
+  actualWhPerKm: number;
+  errorRatio: number;
+  driverStyle: DriverStyle;
 }

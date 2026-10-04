@@ -1,21 +1,21 @@
-import { FC } from 'react';
+import React, { FC, useMemo } from 'react';
 import { 
   Car, 
   BatteryMedium, 
   Users, 
   Luggage, 
-  Sliders, 
   ShieldAlert, 
-  Thermometer, 
-  Sparkles,
-  Info,
-  Scale,
+  MapPin,
+  CheckCircle,
   CloudSun,
-  RefreshCw,
-  Wind
+  Activity,
+  Zap,
+  ArrowRight,
+  Settings,
+  ShieldCheck
 } from 'lucide-react';
-import { VehicleSpec, TripInputs, WeatherCondition } from '../types';
-import { VEHICLE_DATABASE } from '../data/vehicles';
+import { VehicleSpec, TripInputs, WeatherCondition, GraphNode } from '../types';
+import { VEHICLE_DATABASE, getVehicleBrands, getVehiclesByBrand } from '../data/vehicles';
 
 interface TripInputPanelProps {
   inputs: TripInputs;
@@ -25,9 +25,9 @@ interface TripInputPanelProps {
   onCalculateRoute: () => void;
   isDriving: boolean;
   weather?: WeatherCondition;
-  onRefreshWeather?: () => void;
-  isRefreshingWeather?: boolean;
-  lastWeatherUpdateText?: string;
+  nodes: GraphNode[];
+  isCalculating?: boolean;
+  onOpenVehicleSettings?: () => void;
 }
 
 export const TripInputPanel: FC<TripInputPanelProps> = ({
@@ -38,36 +38,80 @@ export const TripInputPanel: FC<TripInputPanelProps> = ({
   onCalculateRoute,
   isDriving,
   weather,
-  onRefreshWeather,
-  isRefreshingWeather,
-  lastWeatherUpdateText,
+  nodes,
+  isCalculating = false,
+  onOpenVehicleSettings,
 }) => {
+  const brands = useMemo(() => getVehicleBrands(), []);
+  const originNode = nodes.find(n => n.id === inputs.sourceId) || nodes[0];
+  const destNode = nodes.find(n => n.id === inputs.destinationId) || nodes[nodes.length - 1];
+
+  const currentSoh = inputs.batteryHealthPercent !== undefined ? inputs.batteryHealthPercent : 100;
+  const effectiveUsableKwh = Number((selectedVehicle.usableCapacityKwh * (currentSoh / 100)).toFixed(1));
+  const availableEnergyKwh = Number(((effectiveUsableKwh * inputs.batterySoc) / 100).toFixed(1));
   const totalMassKg = selectedVehicle.kerbWeightKg + (inputs.passengers * inputs.passengerWeightKg) + inputs.cargoWeightKg;
-  const availableEnergyKwh = Number(((selectedVehicle.usableCapacityKwh * inputs.batterySoc) / 100).toFixed(2));
 
   return (
-    <div className="bg-slate-900/90 rounded-2xl border border-slate-800 p-5 shadow-xl backdrop-blur-sm">
-      <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
-        <div className="flex items-center space-x-2">
-          <Sliders className="w-4 h-4 text-emerald-400" />
-          <h2 className="text-sm font-semibold tracking-wide uppercase text-slate-200">
-            Vehicle & Trip Parameters
+    <div className="bg-[#0f121a] rounded-xl border border-white/[0.08] p-4 shadow-xl flex flex-col justify-between space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between pb-3 border-b border-white/[0.06]">
+        <div>
+          <h2 className="text-xs font-semibold tracking-wider uppercase text-slate-200">
+            Trip Configuration
           </h2>
+          <p className="text-[10px] text-slate-400 mt-0.5">Vehicle dynamics & load parameters</p>
         </div>
-        <span className="text-xs bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono">
-          5 Inputs Required
+        <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+          Ready
         </span>
       </div>
 
-      <div className="space-y-4">
-        {/* 1. Vehicle Model Selection */}
+      <div className="space-y-3.5">
+        {/* Origin → Destination Readout */}
+        <div className="bg-[#141822] rounded-lg p-2.5 border border-white/[0.06] text-xs">
+          <div className="flex items-center justify-between text-slate-400 text-[10px] font-mono mb-1.5 uppercase">
+            <span>Route Corridor</span>
+            <span>Terrain Elevation</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-slate-200 font-medium truncate max-w-[150px]">
+              <MapPin className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+              <span className="truncate">{originNode?.name.split(' ')[0]}</span>
+            </div>
+            <ArrowRight className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
+            <div className="flex items-center gap-1.5 text-slate-200 font-medium truncate max-w-[150px]">
+              <MapPin className="w-3.5 h-3.5 text-rose-400 flex-shrink-0" />
+              <span className="truncate">{destNode?.name.split(' ')[0]}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* 1. Vehicle Selection grouped by Brand */}
         <div>
-          <label className="text-xs font-medium text-slate-300 flex items-center justify-between mb-1.5">
+          <label className="text-[11px] font-medium text-slate-300 flex items-center justify-between mb-1">
             <span className="flex items-center gap-1.5">
-              <Car className="w-3.5 h-3.5 text-cyan-400" />
-              1. Vehicle Model
+              <Car className="w-3.5 h-3.5 text-emerald-400" />
+              Vehicle Model
             </span>
-            <span className="text-[11px] text-slate-500 font-mono">Internal Spec DB</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-slate-400 font-mono">
+                {currentSoh < 100 ? (
+                  <span className="text-amber-400 font-semibold">{effectiveUsableKwh} kWh ({currentSoh}% SoH)</span>
+                ) : (
+                  <span>{selectedVehicle.usableCapacityKwh} kWh net</span>
+                )}
+              </span>
+              {onOpenVehicleSettings && (
+                <button
+                  type="button"
+                  onClick={onOpenVehicleSettings}
+                  className="p-1 rounded hover:bg-white/[0.08] text-slate-400 hover:text-emerald-400 transition-colors cursor-pointer"
+                  title="Vehicle Spec & Battery Health Settings"
+                >
+                  <Settings className="w-3 h-3" />
+                </button>
+              )}
+            </div>
           </label>
           <select
             value={selectedVehicle.id}
@@ -75,264 +119,209 @@ export const TripInputPanel: FC<TripInputPanelProps> = ({
               const v = VEHICLE_DATABASE.find(item => item.id === e.target.value);
               if (v) {
                 onSelectVehicle(v);
-                onChangeInputs({ ...inputs, vehicleId: v.id });
               }
             }}
             disabled={isDriving}
-            className="w-full bg-slate-800/90 border border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold text-slate-100 focus:outline-none focus:border-emerald-500 transition-colors"
+            className="w-full bg-[#141822] border border-white/[0.1] rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-100 focus:outline-none focus:border-emerald-500/60 transition-colors"
           >
-            {VEHICLE_DATABASE.map(v => (
-              <option key={v.id} value={v.id} className="bg-slate-900 text-slate-100">
-                {v.manufacturer} {v.model} ({v.batteryCapacityKwh} kWh, {v.motorPowerKw} kW)
-              </option>
-            ))}
+            {brands.map(brand => {
+              const brandVehicles = getVehiclesByBrand(brand);
+              return (
+                <optgroup key={brand} label={`── ${brand.toUpperCase()} ──`} className="bg-[#0f121a] text-emerald-400 font-semibold">
+                  {brandVehicles.map(v => (
+                    <option key={v.id} value={v.id} className="bg-[#141822] text-slate-100 font-normal">
+                      {v.manufacturer} {v.model} ({v.batteryCapacityKwh} kWh · {v.motorPowerKw} kW)
+                    </option>
+                  ))}
+                </optgroup>
+              );
+            })}
           </select>
-
-          {/* Vehicle Spec Badges */}
-          <div className="grid grid-cols-3 gap-2 mt-2 text-[11px] font-mono">
-            <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-1.5 text-center">
-              <span className="text-slate-400 block text-[10px]">Battery</span>
-              <span className="text-emerald-400 font-bold">{selectedVehicle.batteryCapacityKwh} kWh</span>
-            </div>
-            <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-1.5 text-center">
-              <span className="text-slate-400 block text-[10px]">Kerb Mass</span>
-              <span className="text-slate-200 font-bold">{selectedVehicle.kerbWeightKg} kg</span>
-            </div>
-            <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-1.5 text-center">
-              <span className="text-slate-400 block text-[10px]">Max Fast DC</span>
-              <span className="text-amber-400 font-bold">{selectedVehicle.maxDcChargingPowerKw} kW</span>
-            </div>
-          </div>
         </div>
 
-        {/* 2. Battery SOC Slider */}
-        <div className="bg-slate-800/40 p-3 rounded-xl border border-slate-800">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-xs font-medium text-slate-300 flex items-center gap-1.5">
-              <BatteryMedium className={`w-3.5 h-3.5 ${inputs.batterySoc <= 20 ? 'text-rose-400' : inputs.batterySoc <= 50 ? 'text-amber-400' : 'text-emerald-400'}`} />
-              2. Current Battery (SOC)
+        {/* 2. Battery State-of-Health (SoH) Multiplier */}
+        <div className="bg-[#141822] p-2.5 rounded-lg border border-white/[0.06]">
+          <div className="flex items-center justify-between mb-1 text-xs">
+            <span className="font-medium text-slate-300 flex items-center gap-1.5">
+              <ShieldCheck className={`w-3.5 h-3.5 ${currentSoh < 80 ? 'text-amber-400' : 'text-emerald-400'}`} />
+              Battery Health (SoH)
             </span>
-            <div className="text-right">
-              <span className="text-xs font-bold font-mono text-emerald-400">{inputs.batterySoc}%</span>
-              <span className="text-[10px] text-slate-400 ml-1.5 font-mono">({availableEnergyKwh} kWh)</span>
+            <div className="flex items-center gap-1.5">
+              <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border ${
+                currentSoh >= 95 ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' :
+                currentSoh >= 85 ? 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20' :
+                currentSoh >= 75 ? 'text-amber-400 bg-amber-500/10 border-amber-500/20' :
+                'text-rose-400 bg-rose-500/10 border-rose-500/20'
+              }`}>
+                {currentSoh}% SoH
+              </span>
+              {onOpenVehicleSettings && (
+                <button
+                  type="button"
+                  onClick={onOpenVehicleSettings}
+                  className="text-[10px] text-cyan-400 hover:text-cyan-300 hover:underline font-mono cursor-pointer"
+                >
+                  Specs
+                </button>
+              )}
             </div>
           </div>
           <input
             type="range"
-            min="10"
-            max="100"
-            step="1"
+            min={50}
+            max={100}
+            step={1}
+            value={currentSoh}
+            disabled={isDriving}
+            onChange={(e) => onChangeInputs({ ...inputs, batteryHealthPercent: Number(e.target.value) })}
+            className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+          />
+          <div className="flex justify-between items-center text-[9px] font-mono text-slate-500 mt-1">
+            <span>50% (Worn)</span>
+            <span className="text-slate-400 font-semibold">{effectiveUsableKwh} kWh effective usable</span>
+            <span>100% (Nominal)</span>
+          </div>
+        </div>
+
+        {/* 2. Battery Starting SOC */}
+        <div className="bg-[#141822] p-2.5 rounded-lg border border-white/[0.06]">
+          <div className="flex items-center justify-between mb-1 text-xs">
+            <span className="font-medium text-slate-300 flex items-center gap-1.5">
+              <BatteryMedium className={`w-3.5 h-3.5 ${inputs.batterySoc <= 20 ? 'text-rose-400' : 'text-emerald-400'}`} />
+              Battery SOC
+            </span>
+            <span className="font-mono font-bold text-emerald-400">
+              {inputs.batterySoc}% <span className="text-slate-400 text-[10px] font-normal">({availableEnergyKwh} kWh)</span>
+            </span>
+          </div>
+          <input
+            type="range"
+            min={15}
+            max={100}
+            step={1}
             value={inputs.batterySoc}
             disabled={isDriving}
             onChange={(e) => onChangeInputs({ ...inputs, batterySoc: Number(e.target.value) })}
-            className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+            className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
           />
-          <div className="flex justify-between text-[10px] text-slate-500 font-mono mt-1">
-            <span>10% (Low)</span>
+          <div className="flex justify-between text-[9px] font-mono text-slate-500 mt-1">
+            <span>15%</span>
             <span>50%</span>
-            <span>100% (Full)</span>
+            <span>80%</span>
+            <span>100%</span>
           </div>
         </div>
 
-        {/* 3. Passenger Count & Cargo Weight (Additional Mass) */}
-        <div className="grid grid-cols-2 gap-3">
-          <div className="bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
-            <label className="text-[11px] font-medium text-slate-300 flex items-center justify-between mb-1">
-              <span className="flex items-center gap-1">
-                <Users className="w-3 h-3 text-cyan-400" />
-                Passengers
-              </span>
-              <span className="font-mono text-cyan-400 font-bold">{inputs.passengers}</span>
-            </label>
-            <input
-              type="range"
-              min="1"
-              max="5"
-              step="1"
-              value={inputs.passengers}
-              disabled={isDriving}
-              onChange={(e) => onChangeInputs({ ...inputs, passengers: Number(e.target.value) })}
-              className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-            />
-            <span className="text-[10px] text-slate-400 block mt-1">
-              + {inputs.passengers * inputs.passengerWeightKg} kg (at 75kg/p)
+        {/* 3. Passengers & Cargo Grid */}
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <div className="bg-[#141822] p-2 rounded-lg border border-white/[0.06]">
+            <span className="text-[10px] text-slate-400 flex items-center gap-1 mb-1">
+              <Users className="w-3 h-3 text-slate-400" />
+              Passengers
+            </span>
+            <div className="flex items-center justify-between">
+              <input
+                type="number"
+                min={1}
+                max={7}
+                value={inputs.passengers}
+                disabled={isDriving}
+                onChange={(e) => onChangeInputs({ ...inputs, passengers: Math.max(1, Number(e.target.value)) })}
+                className="w-12 bg-black/40 border border-white/10 rounded px-1.5 py-0.5 text-xs font-mono font-semibold text-slate-100 text-center"
+              />
+              <span className="text-[10px] text-slate-500 font-mono">{(inputs.passengers * inputs.passengerWeightKg)} kg</span>
+            </div>
+          </div>
+
+          <div className="bg-[#141822] p-2 rounded-lg border border-white/[0.06]">
+            <span className="text-[10px] text-slate-400 flex items-center gap-1 mb-1">
+              <Luggage className="w-3 h-3 text-slate-400" />
+              Cargo Load
+            </span>
+            <div className="flex items-center justify-between">
+              <input
+                type="number"
+                min={0}
+                max={300}
+                step={5}
+                value={inputs.cargoWeightKg}
+                disabled={isDriving}
+                onChange={(e) => onChangeInputs({ ...inputs, cargoWeightKg: Math.max(0, Number(e.target.value)) })}
+                className="w-12 bg-black/40 border border-white/10 rounded px-1.5 py-0.5 text-xs font-mono font-semibold text-slate-100 text-center"
+              />
+              <span className="text-[10px] text-slate-500 font-mono">kg</span>
+            </div>
+          </div>
+        </div>
+
+        {/* 4. Minimum Safety Reserve SOC */}
+        <div className="bg-[#141822] p-2.5 rounded-lg border border-white/[0.06]">
+          <div className="flex items-center justify-between mb-1 text-xs">
+            <span className="font-medium text-slate-300 flex items-center gap-1.5">
+              <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+              Minimum Reserve
+            </span>
+            <span className="font-mono font-semibold text-amber-300">{inputs.minimumReserveSoc}% buffer</span>
+          </div>
+          <input
+            type="range"
+            min={5}
+            max={25}
+            step={1}
+            value={inputs.minimumReserveSoc}
+            disabled={isDriving}
+            onChange={(e) => onChangeInputs({ ...inputs, minimumReserveSoc: Number(e.target.value) })}
+            className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+          />
+          <div className="flex justify-between text-[9px] font-mono text-slate-500 mt-0.5">
+            <span>5% (Aggressive)</span>
+            <span>10% (Std)</span>
+            <span>20% (Safe)</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Primary Action Button */}
+      <button
+        type="button"
+        onClick={onCalculateRoute}
+        disabled={isDriving || isCalculating}
+        className="w-full py-2.5 px-4 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs uppercase tracking-wider rounded-lg transition-all shadow-md shadow-emerald-500/10 active:scale-[0.99] cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+      >
+        <Zap className="w-4 h-4 fill-current" />
+        <span>{isCalculating ? 'Computing A* Paths...' : 'PLAN ROUTE'}</span>
+      </button>
+
+      {/* Compact Live Conditions */}
+      <div className="pt-3 border-t border-white/[0.06] space-y-2">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block">
+          Live Conditions
+        </span>
+        <div className="grid grid-cols-2 gap-1.5 text-[10px] font-mono text-slate-300">
+          <div className="flex items-center justify-between bg-white/[0.02] px-2 py-1 rounded border border-white/[0.04]">
+            <span className="text-slate-400">Road Data</span>
+            <span className="text-emerald-400 flex items-center gap-1">
+              <CheckCircle className="w-2.5 h-2.5" /> OSM High-Res
             </span>
           </div>
-
-          <div className="bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
-            <label className="text-[11px] font-medium text-slate-300 flex items-center justify-between mb-1">
-              <span className="flex items-center gap-1">
-                <Luggage className="w-3 h-3 text-amber-400" />
-                Cargo Load
-              </span>
-              <span className="font-mono text-amber-400 font-bold">{inputs.cargoWeightKg} kg</span>
-            </label>
-            <input
-              type="range"
-              min="0"
-              max="150"
-              step="5"
-              value={inputs.cargoWeightKg}
-              disabled={isDriving}
-              onChange={(e) => onChangeInputs({ ...inputs, cargoWeightKg: Number(e.target.value) })}
-              className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-amber-500"
-            />
-            <span className="text-[10px] text-slate-400 block mt-1">Luggage & gear</span>
+          <div className="flex items-center justify-between bg-white/[0.02] px-2 py-1 rounded border border-white/[0.04]">
+            <span className="text-slate-400">Traffic</span>
+            <span className="text-cyan-400 flex items-center gap-1">
+              <Activity className="w-2.5 h-2.5" /> Real-time
+            </span>
           </div>
-        </div>
-
-        {/* Calculated Total Dynamic Mass Indicator */}
-        <div className="flex items-center justify-between bg-slate-800/70 border border-slate-700/60 rounded-xl px-3 py-2 text-xs">
-          <span className="text-slate-300 flex items-center gap-1.5">
-            <Scale className="w-3.5 h-3.5 text-emerald-400" />
-            Total Moving Mass (F_roll, F_grade)
-          </span>
-          <span className="font-mono font-bold text-slate-100">{totalMassKg} kg</span>
-        </div>
-
-        {/* Secondary Parameters (Reserve & Cabin Climate) */}
-        <div className="grid grid-cols-2 gap-3 text-xs">
-          <div>
-            <label className="text-[11px] text-slate-400 flex items-center gap-1 mb-1">
-              <ShieldAlert className="w-3 h-3 text-rose-400" />
-              Min. Reserve SOC
-            </label>
-            <select
-              value={inputs.minimumReserveSoc}
-              onChange={(e) => onChangeInputs({ ...inputs, minimumReserveSoc: Number(e.target.value) })}
-              disabled={isDriving}
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200"
-            >
-              <option value={10}>10% (Standard Reserve)</option>
-              <option value={15}>15% (Safe Hill Margin)</option>
-              <option value={20}>20% (Conservative)</option>
-            </select>
+          <div className="flex items-center justify-between bg-white/[0.02] px-2 py-1 rounded border border-white/[0.04]">
+            <span className="text-slate-400">Weather</span>
+            <span className="text-amber-400 flex items-center gap-1">
+              <CloudSun className="w-2.5 h-2.5" /> {weather ? `${weather.temperatureC}°C · ${weather.windSpeedKmh}km/h` : 'Sync'}
+            </span>
           </div>
-
-          <div>
-            <label className="text-[11px] text-slate-400 flex items-center gap-1 mb-1">
-              <Thermometer className="w-3 h-3 text-cyan-400" />
-              Cabin AC Setpoint
-            </label>
-            <select
-              value={inputs.cabinTempC}
-              onChange={(e) => onChangeInputs({ ...inputs, cabinTempC: Number(e.target.value) })}
-              disabled={isDriving}
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200"
-            >
-              <option value={20}>20°C (High AC Draw)</option>
-              <option value={22}>22°C (Comfortable)</option>
-              <option value={24}>24°C (Eco AC Mode)</option>
-            </select>
+          <div className="flex items-center justify-between bg-white/[0.02] px-2 py-1 rounded border border-white/[0.04]">
+            <span className="text-slate-400">Charging</span>
+            <span className="text-emerald-400 flex items-center gap-1">
+              <Zap className="w-2.5 h-2.5" /> Network Live
+            </span>
           </div>
-        </div>
-
-        {/* Routing Objective Mode Selection */}
-        <div>
-          <label className="text-xs font-medium text-slate-300 block mb-1.5">
-            Routing Optimization Focus
-          </label>
-          <div className="grid grid-cols-3 gap-1.5 bg-slate-800/80 p-1 rounded-xl border border-slate-700/80">
-            <button
-              type="button"
-              onClick={() => onChangeInputs({ ...inputs, routingObjective: 'energy_efficient' })}
-              className={`py-1.5 px-2 rounded-lg text-xs font-medium transition-all ${
-                inputs.routingObjective === 'energy_efficient'
-                  ? 'bg-emerald-600 text-white shadow-sm font-semibold'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              ML-A* Energy
-            </button>
-            <button
-              type="button"
-              onClick={() => onChangeInputs({ ...inputs, routingObjective: 'balanced' })}
-              className={`py-1.5 px-2 rounded-lg text-xs font-medium transition-all ${
-                inputs.routingObjective === 'balanced'
-                  ? 'bg-purple-600 text-white shadow-sm font-semibold'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Balanced
-            </button>
-            <button
-              type="button"
-              onClick={() => onChangeInputs({ ...inputs, routingObjective: 'fastest' })}
-              className={`py-1.5 px-2 rounded-lg text-xs font-medium transition-all ${
-                inputs.routingObjective === 'fastest'
-                  ? 'bg-blue-600 text-white shadow-sm font-semibold'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Fastest (Time)
-            </button>
-          </div>
-        </div>
-
-        {/* Real-Time Route Segment Weather & Microclimate Card */}
-        {weather && (
-          <div className="bg-slate-800/50 p-3 rounded-xl border border-slate-750 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-200 flex items-center gap-1.5">
-                <CloudSun className="w-3.5 h-3.5 text-amber-400" />
-                Live Segment Weather Telemetry
-              </span>
-              {onRefreshWeather && (
-                <button
-                  type="button"
-                  onClick={onRefreshWeather}
-                  disabled={isRefreshingWeather}
-                  className="flex items-center gap-1 text-[11px] font-semibold text-emerald-400 hover:text-emerald-300 bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-500/40 px-2 py-1 rounded-lg transition-all disabled:opacity-50 cursor-pointer"
-                >
-                  <RefreshCw className={`w-3 h-3 ${isRefreshingWeather ? 'animate-spin' : ''}`} />
-                  <span>{isRefreshingWeather ? 'Fetching...' : 'Refresh Weather'}</span>
-                </button>
-              )}
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 text-xs font-mono">
-              <div className="bg-slate-900/70 p-2 rounded-lg border border-slate-800">
-                <span className="text-slate-400 block text-[10px]">Ambient Temp (HVAC)</span>
-                <span className="text-amber-300 font-bold text-sm">{weather.temperatureC}°C</span>
-                <span className="text-[9px] text-slate-500 block">
-                  Δ {Math.abs(weather.temperatureC - inputs.cabinTempC).toFixed(1)}°C cabin delta
-                </span>
-              </div>
-
-              <div className="bg-slate-900/70 p-2 rounded-lg border border-slate-800">
-                <span className="text-slate-400 block text-[10px]">Wind Velocity (Aero)</span>
-                <span className="text-cyan-300 font-bold text-sm">{weather.windSpeedKmh} km/h</span>
-                <span className="text-[9px] text-slate-500 block flex items-center gap-1">
-                  <Wind className="w-2.5 h-2.5" />
-                  rho: {weather.airDensityKgM3 || 1.20} kg/m³
-                </span>
-              </div>
-            </div>
-
-            {lastWeatherUpdateText && (
-              <p className="text-[10px] text-emerald-400/90 font-mono bg-emerald-950/40 p-1.5 rounded border border-emerald-900/50">
-                {lastWeatherUpdateText}
-              </p>
-            )}
-          </div>
-        )}
-
-        {/* Calculate button */}
-        <button
-          type="button"
-          onClick={onCalculateRoute}
-          disabled={isDriving}
-          className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold py-2.5 px-4 rounded-xl text-xs flex items-center justify-center space-x-2 transition-all shadow-lg shadow-emerald-950/40 cursor-pointer"
-        >
-          <Sparkles className="w-4 h-4" />
-          <span>Execute Battery-Constrained A* Search</span>
-        </button>
-
-        <div className="flex items-start gap-1.5 text-[11px] text-slate-400 bg-slate-800/30 p-2 rounded-lg">
-          <Info className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0 mt-0.5" />
-          <span>
-            Elevation gradients, wind speed, live traffic & charging stations are acquired automatically via APIs.
-          </span>
         </div>
       </div>
     </div>
