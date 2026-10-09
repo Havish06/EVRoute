@@ -8,6 +8,7 @@ import { MLInsightsModal } from './components/MLInsightsModal';
 import { RangeIsochroneModal } from './components/RangeIsochroneModal';
 import { ModelLearningModal } from './components/ModelLearningModal';
 import { VehicleSpecSettingsModal } from './components/VehicleSpecSettingsModal';
+import { NotFoundPage } from './components/NotFoundPage';
 import { ROUTE_PRESETS, RoutePreset } from './data/sampleRoutes';
 import { VEHICLE_DATABASE, getVehicleById } from './data/vehicles';
 import { VehicleSpec, TripInputs, RouteOption, TelemetryState, WeatherCondition, IsochroneContour, TelemetryAnomaly, DriverStyle } from './types';
@@ -15,8 +16,30 @@ import { computeAllRouteOptions, solveAStarRoute } from './services/astarRouter'
 import { fetchRealtimeRouteWeather } from './services/weatherService';
 import { recordTelemetryObservation } from './services/telemetryLearningLoop';
 
+const getInitialRouteState = (): { mode: AppMode; isNotFound: boolean } => {
+  const rawPath = window.location.pathname.toLowerCase();
+  const cleanPath = rawPath.replace(/\/+$/, '') || '/';
+  
+  if (cleanPath === '/' || cleanPath === '/plan') {
+    return { mode: 'plan', isNotFound: false };
+  }
+  if (cleanPath === '/drive') {
+    return { mode: 'drive', isNotFound: false };
+  }
+  if (cleanPath === '/analyze') {
+    return { mode: 'analyze', isNotFound: false };
+  }
+  if (cleanPath === '/engine') {
+    return { mode: 'engine', isNotFound: false };
+  }
+  return { mode: 'plan', isNotFound: true };
+};
+
 export default function App() {
-  const [activeMode, setActiveMode] = useState<AppMode>('plan');
+  const initialRoute = useMemo(() => getInitialRouteState(), []);
+  const [activeMode, setActiveMode] = useState<AppMode>(initialRoute.mode);
+  const [isNotFound, setIsNotFound] = useState<boolean>(initialRoute.isNotFound);
+  const [attemptedPath, setAttemptedPath] = useState<string>(() => window.location.pathname || '/');
   const [activePreset, setActivePreset] = useState<RoutePreset>(ROUTE_PRESETS[0]);
   const [currentWeather, setCurrentWeather] = useState<WeatherCondition>(ROUTE_PRESETS[0].weather);
   const [isRefreshingWeather, setIsRefreshingWeather] = useState<boolean>(false);
@@ -339,12 +362,60 @@ export default function App() {
     activePreset.nodes[0]?.lng || 80.1534,
   ];
 
+  // Browser navigation popstate listener
+  useEffect(() => {
+    const handlePopState = () => {
+      const { mode, isNotFound: notFound } = getInitialRouteState();
+      setActiveMode(mode);
+      setIsNotFound(notFound);
+      setAttemptedPath(window.location.pathname || '/');
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const handleSelectMode = (mode: AppMode) => {
+    setActiveMode(mode);
+    setIsNotFound(false);
+    const targetUrl = mode === 'plan' ? '/' : `/${mode}`;
+    if (window.location.pathname !== targetUrl) {
+      window.history.pushState({}, '', targetUrl);
+    }
+  };
+
+  const handleTrigger404 = () => {
+    setAttemptedPath('/unmapped-waypoint-404');
+    setIsNotFound(true);
+    window.history.pushState({}, '', '/404');
+  };
+
+  const handleReturnFromNotFound = (preset?: RoutePreset, mode: AppMode = 'plan') => {
+    if (preset) {
+      handleSelectPreset(preset);
+    }
+    setActiveMode(mode);
+    setIsNotFound(false);
+    const targetUrl = mode === 'plan' ? '/' : `/${mode}`;
+    window.history.pushState({}, '', targetUrl);
+  };
+
+  if (isNotFound) {
+    return (
+      <NotFoundPage
+        attemptedPath={attemptedPath}
+        selectedVehicle={selectedVehicle}
+        currentSoc={telemetry.currentActualSoc}
+        onReturnToCockpit={handleReturnFromNotFound}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#090b10] text-slate-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-slate-900">
       {/* Top Navbar with Mode Switching & Global Status */}
       <Navbar
         activeMode={activeMode}
-        onSelectMode={(mode) => setActiveMode(mode)}
+        onSelectMode={handleSelectMode}
         activePreset={activePreset}
         onSelectPreset={handleSelectPreset}
         selectedVehicle={selectedVehicle}
@@ -359,6 +430,7 @@ export default function App() {
         onOpenIsochrones={() => setIsIsochroneModalOpen(true)}
         onOpenModelLearningModal={() => setIsModelLearningModalOpen(true)}
         onOpenVehicleSettings={() => setIsVehicleSettingsOpen(true)}
+        onTrigger404={handleTrigger404}
       />
 
       {/* Main Mode Workspace */}

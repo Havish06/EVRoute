@@ -10,7 +10,8 @@ import {
   BarChart3, 
   Navigation,
   Radio,
-  Settings
+  Settings,
+  MapPinOff
 } from 'lucide-react';
 import { VehicleSpec, WeatherCondition } from '../types';
 import { ROUTE_PRESETS, RoutePreset } from '../data/sampleRoutes';
@@ -35,6 +36,7 @@ interface NavbarProps {
   onOpenIsochrones?: () => void;
   onOpenModelLearningModal?: () => void;
   onOpenVehicleSettings?: () => void;
+  onTrigger404?: () => void;
 }
 
 export const Navbar: FC<NavbarProps> = ({
@@ -54,6 +56,7 @@ export const Navbar: FC<NavbarProps> = ({
   onOpenIsochrones,
   onOpenModelLearningModal,
   onOpenVehicleSettings,
+  onTrigger404,
 }) => {
   const modes: { id: AppMode; label: string; icon: React.ReactNode }[] = [
     { id: 'plan', label: 'PLAN', icon: <Navigation className="w-3.5 h-3.5" /> },
@@ -224,6 +227,16 @@ export const Navbar: FC<NavbarProps> = ({
                 {batteryHealthPercent < 100 && (
                   <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
                 )}
+              </button>
+            )}
+            {onTrigger404 && (
+              <button
+                type="button"
+                onClick={onTrigger404}
+                className="p-1.5 rounded-md hover:bg-white/[0.08] text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
+                title="Simulate 404 Off-Grid Waypoint / Lost Telemetry"
+              >
+                <MapPinOff className="w-3.5 h-3.5" />
               </button>
             )}
           </div>
